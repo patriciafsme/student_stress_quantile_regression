@@ -1,0 +1,860 @@
+---
+title: "Quantile Regression Analysis of Factors Influencing Student Stress"
+subtitle: "Advanced statistical analysis of student stress factors using Quantile Regression and visualization"
+author: "Patricia Fernández Sanz"
+format:
+  html:
+    theme: [style.scss]
+    toc: true
+    toc-location: right
+    toc-title: Overview
+editor: visual
+embed-resources: true
+---
+
+## Note For The Reader
+
+For a better viewing experience, especially to explore the code chunks and navigate through the document using the overview panel, it is recommended to open the HTML version of this project if possible. The content in the HTML is identical to that in the PDF, but it allows for easier and more dynamic navigation, as well as direct access to the underlying R code.
+
+## Packages and Theme
+
+We will need the following packages
+
+```{r paquetes}
+#| message: false
+#| warning: false
+#| code-fold: true
+rm(list = ls()) # Delete environment variables
+
+library(tidyverse)
+library(performance)
+library(olsrr)
+library(corrr)
+library(corrplot)
+library(skimr)
+library(showtext)
+library(sysfonts)
+library(quantreg)
+library(ggplot2)
+library(reshape2)
+library(car)
+library(dplyr)
+library(tidyr)
+library(knitr)
+```
+
+And we will also add the following theme which we will use for our graphs and plots
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+font_add_google(name = "Lexend")
+font_add_google(name = "Poppins")
+showtext_auto()
+
+theme_set(theme_minimal(base_family = "Lexend"))
+
+tema_sencillo <- theme(legend.position = "bottom",
+                       plot.background = element_rect(fill = "lavenderblush2"),
+                       panel.background = element_rect(fill = "ghostwhite"),
+                       panel.grid.major = element_line(colour = "lavenderblush3",
+                                                       linewidth = 0.5),
+                       panel.grid.minor = element_blank(),
+                       plot.title = element_text(face = "bold", size = 20))
+```
+
+## Load the Data
+
+Since we will be working with a .R file, we will load it with the function load()
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+load("C:/Users/Patricia Fernández/Desktop/universidad/segundo/depuracion/depuracion/stat_ucr/QR_data.rdata")
+```
+
+Once the dataset is loaded on our global variables, we can start working with it.
+
+## Dataset and Main Objective
+
+A group of researchers conducted a study to understand the **factors contributing to variation in student stress levels during an academic term**.
+
+They surveyed 500 students and recorded their self-reported stress scores at the end of the term.
+
+The researchers were particularly interested in whether stress was related to individual characteristics such as academic standing, social environment, and campus logistics.
+
+In addition to overall patterns, they were curious whether different factors mattered more for students with higher or lower levels of stress.
+
+The dataset includes the following variables:
+
+-   `stress`: Student-reported stress score at the end of the term
+-   `gpa`: Prior academic performance (based on GPA at study entry)
+-   `support`: Social support index
+-   `self efficacy`: Self-perception of ability
+-   `commute`: Commute distance to campus (in miles)
+
+In this analysis, our response variable is `stress`, and we will initially include all other variables as predictors.
+
+Our **main objective is to examine whether different factors, such as commute distance or GPA, are associated with higher or lower levels of stress among students**.
+
+Specifically, we aim to understand if the influence of these predictors varies across the stress distribution, rather than assuming a uniform effect.
+
+## EDA
+
+Before fitting any models to our data, it is essential to preprocess the dataset to ensure variables are correctly treated and to address any missing values that may affect the analysis.
+
+### Preprocessing
+
+We begin with an initial exploratory analysis using the skim() function. This provides a quick overview of the dataset, allowing us to identify the type of each variable, detect any missing values, etc.
+
+This step helps guide any necessary transformations or cleaning steps before modeling.
+
+```{r}
+#| message: false
+#| warning: false
+QR_data |> 
+  skim()
+```
+
+From the initial results, we observe that the dataset contains 500 observations, no missing values, and all variables are of numeric type, which simplifies preprocessing.
+
+If we take a look through the ranges we are able to see that `stress` ranges from -20.4 to 33.96. We assume these values are acceptable, as they likely represent a standardized or scaled score reported by participants.
+
+The variable `gpa` ranges from 1.47 to 4.23. Since GPA scores typically range from 0 to 4.0, values above 4.0 may indicate either a different grading scale or data inconsistencies. We will further examine the distribution to assess whether any corrections are necessary.
+
+For the `commute` variable, which represents distance to campus in miles, some negative values are present, which are not plausible in this context. These entries will need to be investigated and possibly corrected or removed.
+
+Finally, for `support` and `self_efficacy` we see range roughly from -3.17 to 3.24. These seem to reflect standardized scores or responses from psychological scales, and thus appear reasonable.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+gpa <- QR_data |> 
+         select(gpa)
+#View(gpa)
+
+commute <- QR_data |> 
+         select(commute)
+#View(commute)
+```
+
+We observe that the `gpa` variable generally falls within expected values, but two observations slightly exceed the typical upper limit of 4.0, with values of 4.22 and 4.10.
+
+While these may seem unusual, they are plausible, especially in high school settings where advanced or honors courses can carry extra weighting. For now, we will retain these observations, while keeping them in mind as potential outliers for later analysis.
+
+Regarding the `commute` variable, we identified three observations with negative distances, which are not logically valid, as commute distance cannot be negative. We will exclude these entries from the preprocessed dataset.
+
+However, the original data will be preserved so we can revisit and test model performance including these cases if necessary.
+
+```{r}
+#| message: false
+#| warning: false
+#| eval: true
+data_preproc <-
+  QR_data |> 
+  filter(commute > 0) 
+```
+
+### Variable Distribution Graphs
+
+To identify any additional unusual or extreme values, we will visualize the distribution of each variable. This will allow us to better understand the shape, spread, and potential outliers in the data, and help confirm whether the assumptions made during preprocessing hold true.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+data_tidy <-
+  data_preproc |> 
+  pivot_longer(cols = everything(),
+               names_to = "variable",
+               values_to = "values")
+
+ggplot(data_tidy, aes(x = values)) +
+  geom_density(aes(color = variable, fill = variable),
+               alpha = 0.75) +
+  facet_wrap(~variable, scales = "free") +
+  tema_sencillo
+```
+
+All of our variables appear to follow distributions that resemble a Gaussian bell curve, with most values concentrated around the center. The only variable that stands out slightly at a glance is `stress`, which may not be perfectly symmetric, though this would require further inspection to confirm.
+
+At this stage, none of the variables show clearly abnormal values. However, to ensure a thorough exploration, we will proceed with an outlier analysis using boxplots to detect any extreme observations that may not be immediately evident from the histograms alone.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+data_long <- data_preproc |> 
+  select(commute, gpa, self_efficacy, support) |> 
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+
+extreme_outliers <- data_long |> 
+  group_by(Variable) |> 
+  summarise(Extreme = list(boxplot.stats(Value, coef = 3)$out))
+
+mild_outliers <- data_long |> 
+  group_by(Variable) |> 
+  summarise(Mild = list(boxplot.stats(Value, coef = 1.5)$out))
+
+```
+
+| Variable      | Mild outliers | Extreme outliers |
+|---------------|---------------|------------------|
+| commute       | 3             | 0                |
+| gpa           | 4             | 0                |
+| self efficacy | 2             | 0                |
+| support       | 9             | 0                |
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+
+ggplot(data_long, aes(x = Variable, y = Value)) +
+  geom_boxplot(outlier.colour = "plum4", outlier.shape = 8) +
+  labs(title = "Boxplots for Each Predictor with Outliers Highlighted",
+       y = "Value", x = "Variable") +
+  tema_sencillo
+
+```
+
+We generated boxplots for each variable and printed both the mild outlier values and the extreme outliers (beyond 3×IQR).
+
+None of the variables presented any extreme outliers, which suggests that the data does not contain unusually large deviations.
+
+Given this, and considering the distributions already observed, we will treat all remaining values as typical and retain them for modeling purposes.
+
+## Model Fitting
+
+After completing the initial data cleaning and preparation, we proceed to fit several models in order to explore how the predictors relate to our response variable, `stress`.
+
+The goal is to understand not just the average effect, but also how these effects differ across the distribution of stress levels.
+
+### Quantile Regression
+
+We begin by fitting three quantile regression models at the 25th, 50th, and 75th percentiles.
+
+This allows us to compare how predictors behave for individuals with lower, median, and higher stress levels, respectively. By doing so, we go beyond the average relationship and gain insight into how different factors may be more or less important depending on the level of stress.
+
+This approach is particularly useful when we suspect that the effect of predictors varies across the distribution of the response variable.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+fit_qr_25 <- rq(stress ~ commute + gpa + support + self_efficacy, data = data_preproc, tau = 0.25)
+fit_qr_50 <- rq(stress ~ commute + gpa + support + self_efficacy, data = data_preproc, tau = 0.5)
+fit_qr_75 <- rq(stress ~ commute + gpa + support + self_efficacy, data = data_preproc, tau = 0.75)
+```
+
+In order to compare the results from our quantile regressions, we will also fit a traditional Ordinary Least Squares (OLS) linear regression model.
+
+This will allow us to evaluate how the average effect of the predictors compares to their effects at different points in the stress distribution (as captured by the QR models).
+
+By doing so, we can better understand whether certain predictors have a stronger influence among individuals with low, average, or high stress levels.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+fit_ols <- lm(stress ~ commute + gpa + support + self_efficacy, data = data_preproc)
+```
+
+### Multicollinearity and Linearity Check
+
+Before comparing the OLS model with our quantile regression models, we first need to check for multicollinearity and assess linearity assumptions.
+
+Multicollinearity occurs when predictor variables are highly correlated with each other. This can inflate the standard errors of the coefficients, making the estimates unstable and difficult to interpret reliably. Detecting and addressing multicollinearity helps ensure our model's coefficients are meaningful and that the inference is valid.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+#| echo: true
+#| results: hide
+vif(fit_ols)
+```
+
+| commute  | gpa      | support  | self_efficacy |
+|----------|----------|----------|---------------|
+| 1.001863 | 1.004018 | 1.004842 | 1.001146      |
+
+None of the VIF values exceed 5, indicating that multicollinearity is not a concern in our dataset.
+
+Additionally, OLS assumes a linear relationship between each predictor and the outcome variable. Violations of this assumption can bias coefficient estimates and result in a poor model fit.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+resid_ols <- residuals(fit_ols)
+
+predictors <- c("support", "commute", "gpa", "self_efficacy")
+
+plot_data <- data_preproc |> 
+  select(all_of(predictors)) |> 
+  mutate(residuals = resid_ols) |> 
+  pivot_longer(cols = all_of(predictors), names_to = "predictor", values_to = "value") |> 
+  mutate(
+    effect = map2_dbl(predictor, value, ~ coef(fit_ols)[.x] * .y),
+    comp_resid = residuals + effect
+  )
+
+
+ggplot(plot_data, aes(x = value, y = comp_resid)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, color = "plum4") +
+  facet_wrap(~ predictor, scales = "free_x") +
+  labs(
+    title = "Component + Residual Plots for All Predictors",
+    x = "Predictor Value",
+    y = "Component + Residual"
+  ) +
+  tema_sencillo
+```
+
+With this plot we are able to see that for `commute`, `gpa` and `self_efficacy` the lines are relatively flat and horizontal.
+
+These variables have approximately linear or no strong relationship with stress. A flat line means that the predictor has a small effect and the variation it explains is already captured by other predictors.
+
+For the predictor support we see a clear increasing trend in the plot.
+
+This suggests that there is a positive linear relationship between support and stress after controlling the other variables. As support increases, stress also increases.
+
+We do not need to change or fix anything since there is no clear violation on the linearity assumption for the first predictors and the fact that the relationship is clearly non flat for our last predictor it means it adds valuable information to the model, so OLS seams to be also appropriate here.
+
+Last but not least, we will see the summaries for all four models and interpret its results
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+#| echo: true
+#| results: hide
+summary(fit_qr_25)
+summary(fit_qr_50)
+summary(fit_qr_75)
+summary(fit_ols)
+```
+
+| QR 25%        | Coefficients | Lower bound | Upper bound |
+|---------------|--------------|-------------|-------------|
+| (Intercept)   | 2.50333      | -0.04048    | 4.07449     |
+| commute       | -0.32751     | -0.50936    | -0.01100    |
+| gpa           | 0.32991      | -0.14189    | 0.98028     |
+| support       | 7.38389      | 6.95770     | 7.82016     |
+| self_efficacy | -0.15014     | -0.33537    | 0.11853     |
+
+| QR 50%        | Coefficients | Lower bound | Upper bound |
+|---------------|--------------|-------------|-------------|
+| (Intercept)   | 1.67592      | -1.09367    | 3.81524     |
+| commute       | -0.04250     | -0.22192    | 0.16294     |
+| gpa           | 0.64194      | 0.04420     | 1.31556     |
+| support       | 7.89782      | 7.44081     | 8.23948     |
+| self_efficacy | -0.00038     | -0.19180    | 0.20893     |
+
+| QR 75%        | Coefficients | Lower bound | Upper bound |
+|---------------|--------------|-------------|-------------|
+| (Intercept)   | 1.79216      | 0.32883     | 4.10217     |
+| commute       | 0.03195      | -0.07680    | 0.20147     |
+| gpa           | 0.87454      | 0.31668     | 1.40124     |
+| support       | 7.84958      | 7.40604     | 8.21957     |
+| self_efficacy | 0.13278      | -0.07610    | 0.39331     |
+
+| OLS           | Estimate | Std. Error | t value | p value       |
+|---------------|----------|------------|---------|---------------|
+| (Intercept)   | 0.93040  | 1.03331    | 0.900   | 0.3683        |
+| commute       | 0.06690  | 0.06383    | 1.048   | 0.2951        |
+| gpa           | 0.70764  | 0.32442    | 2.181   | 0.0296\*      |
+| support       | 7.72829  | 0.12101    | 63.863  | \<2e-16\*\*\* |
+| self_efficacy | -0.12345 | 0.12632    | -0.977  | 0.3289        |
+
+### Interpretation
+
+#### Mile Unit Increase in Commute
+
+At the **25th percentile** of stress the estimated effect is -0.328, with a confidence interval from -0.509 to -0.011.
+
+This suggests a significant negative effect at the lower end of the stress distribution.
+
+At the **50th and 75th percentiles** both are not statistically significant as the confidence interval includes 0 which suggest that there is no clear affect at higher stress levels.
+
+The negative effect of commute is only evident at lower stress levels, possibly indicating that only less-stressed individuals experience commute as a stress-reducing factor or that other stressors dominate for those with higher stress levels.
+
+#### Unit Increase in GPA
+
+In this case, for the **25th percentile** we see that the GPA is not statistically significant since 0 is included in the confidence interval but it does have an effect on the other two quantiles.
+
+At the **50th percentile** the estimate is 0.642 with a confidence interval from 0.044 to 1.316 which suggest that there is a significant positive effect at the median stress level.
+
+For the **75th percentile** we obtained even higher values, with an estimate of 0.875 and a confidence interval from 0.317 to 1.401. There is a stronger and significant effect at higher stress levels
+
+GPA has an increasingly strong and significant positive effect on stress toward higher quantiles, indicating that academic performance may be more stress-inducing for individuals already experiencing higher stress, potentially due to performance pressure.
+
+#### Unit Increase in Support
+
+In this case, it is consistent **across all quantiles**. The estimates range from 7.38 to 7.90 with all confidence intervals narrow and positive. This suggest a strong and significant positive relationship at all stress levels.
+
+Support is a robust predictor of higher stress across the distribution, which is counterintuitive, unless the support is reactive, higher support could be a response to higher stress. The direction of causality should be carefully considered here since it could lead us to uncunclusive or misleading assumptions.
+
+#### Unit Increase in Self Efficacy
+
+**Across all quantiles** self efficacy does not show a significant effect since all confidence interval ranges contain 0.
+
+This might suggest that personal confidence does not have a strong direct link to stress levels in this sample, or the effect may be mediated by other factors.
+
+#### OLS Comparision
+
+For OLS, which is a mean based model, our estimates show that there are significant effect for `support` and `gpa` but not significant for `commute` and `self_efficacy`.
+
+The multiple R-squared has a value of 0.89, indicating it is a good overall model fit since its able to explain approximately 90% of the data.
+
+However, OLS masks the heterogeneity of effects across the stress distribution, especially the commute effect being significant only at the 25th percentile and the increasing effect of GPA from lower to higher stress quantiles.
+
+Quantile regression reveals important differences in how predictors relate to stress at different points in the distribution, offering a more complete understanding than OLS alone.
+
+### Coefficients Across Quantiles
+
+In order to visualize how the effect of each predictor changes across the distribution of our response variable `stress`, we will generate different plots.
+
+OLS gives us one estimate for each predictor, assuming a constant relationship, while quantile regression allows that relationship to vary depending on whether we are predicting the low, median or high outcomes.
+
+This is useful because it reveals possible heterogeneous effects, helps detect non-uniform relationships that OLS would miss and shows which quantiles have statistically significant effects.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+coefs <- data.frame(
+  quantile = c(0.25, 0.5, 0.75),
+  commute = c(coef(fit_qr_25)['commute'], coef(fit_qr_50)['commute'], coef(fit_qr_75)['commute']),
+  gpa = c(coef(fit_qr_25)['gpa'], coef(fit_qr_50)['gpa'], coef(fit_qr_75)['gpa']),
+  support = c(coef(fit_qr_25)['support'], coef(fit_qr_50)['support'], coef(fit_qr_75)['support']),
+  self_efficacy = c(coef(fit_qr_25)['self_efficacy'], coef(fit_qr_50)['self_efficacy'], coef(fit_qr_75)['self_efficacy'])
+)
+
+ggplot(coefs, aes(x = quantile, y = commute)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = coef(fit_ols)['commute'], linetype = "dashed", color = "plum4") +
+  labs(title = "Effect of Commute Across Quantiles",
+       y = "Coefficient for Commute",
+       x = "Quantile") +
+  tema_sencillo
+```
+
+The effect of `commute` on stress varies across quantiles. It's slightly negative at the 25th quantile but closer to zero or positive at higher quantiles. This suggests commute's impact differs by stress level, which the OLS average effect misses.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+ggplot(coefs, aes(x = quantile, y = gpa)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = coef(fit_ols)['gpa'], linetype = "dashed", color = "plum4") +
+  labs(title = "Effect of GPA Across Quantiles",
+       y = "Coefficient for GPA",
+       x = "Quantile") +
+  tema_sencillo
+```
+
+`gpa` shows an increasing protective effect on stress from lower to higher quantiles, meaning better grades increase stress more for highly stressed students. The OLS estimate reflects the overall average effect.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+ggplot(coefs, aes(x = quantile, y = support)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = coef(fit_ols)['support'], linetype = "dashed", color = "plum4") +
+  labs(title = "Effect of Support Across Quantiles",
+       y = "Coefficient for Support",
+       x = "Quantile") +
+  tema_sencillo
+```
+
+Support consistently increases stress across all quantiles with very similar effects, indicating it's an important stress inducer for everyone. The OLS line matches these results closely.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+ggplot(coefs, aes(x = quantile, y = self_efficacy)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = coef(fit_ols)['self_efficacy'], linetype = "dashed", color = "plum4") +
+  labs(title = "Effect of Self Efficacy Across Quantiles",
+       y = "Coefficient for Self Efficacy",
+       x = "Quantile") +
+  tema_sencillo
+```
+
+Self efficacy reduces stress at lower quantiles but has little to no effect at median or higher stress levels, showing a more complex relationship. The OLS average obscures this variation.
+
+## Model Predictions
+
+In order to compare how each model predicts outcomes across levels of a key predictor and see if the prediction lines differ across quantiles, we will be plotting the model predictions of OLS vs quantile regression.
+
+It is useful because we are able to visually check if the QR models are providing meaningfully different predictions from OLS, helps communicate model differences and identifies subgroup differences in predictor-outcome relationships.
+
+To do said plots, for each predictor we will visualize its model predictions while holding the rest of the predictors at their mean values. We will do this for all predictors.
+
+### Commute
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+commute_grid <- data.frame(
+  commute = seq(min(data_preproc$commute), max(data_preproc$commute), length.out = 100),
+  support = mean(data_preproc$support, na.rm = TRUE),
+  gpa = mean(data_preproc$gpa, na.rm = TRUE),
+  self_efficacy = mean(data_preproc$self_efficacy, na.rm = TRUE)
+)
+
+commute_grid$pred_ols <- predict(fit_ols, newdata = commute_grid)
+commute_grid$pred_25 <- predict(fit_qr_25, newdata = commute_grid)
+commute_grid$pred_50 <- predict(fit_qr_50, newdata = commute_grid)
+commute_grid$pred_75 <- predict(fit_qr_75, newdata = commute_grid)
+
+plot_data <- melt(commute_grid,
+                  id.vars = "commute",
+                  measure.vars = c("pred_ols", "pred_25", "pred_50", "pred_75"),
+                  variable.name = "model",
+                  value.name = "prediction")
+
+plot_data$model <- factor(plot_data$model,
+                          levels = c("pred_ols", "pred_25", "pred_50", "pred_75"),
+                          labels = c("OLS", "QR 25%", "QR 50%", "QR 75%"))
+
+ggplot(plot_data, aes(x = commute, y = prediction, color = model)) +
+  geom_line(size = 1.2) +
+  labs(title = "Predicted Stress Across Commute Distances",
+       subtitle = "Comparing OLS vs Quantile Regression",
+       x = "Commute", y = "Predicted Stress", color = "Model") +
+  tema_sencillo +
+  scale_color_manual(values = c("#E15759", "#59A14F", "#4E79A7", "#B07AA1"))
+```
+
+Looking at the plot for commute, we notice that the regression lines split most clearly at the lower end of the stress distribution.
+
+The **25th percentile** line trends noticeably downward, suggesting that individuals with relatively low stress levels tend to shew even lower stress as commute time increases.
+
+On the other hand, the **50th and 75th percentile** lines are relatively flat, with the 75th percentile nudging slightly upward, indicating little to no relationship between commute and stress for more stressed individuals
+
+The **OLS line**, meanwhile, sits somewhere in between and misses this pattern entirely, suggesting that the average effect is close to zero, but hiding the meaning difference in lower stress individuals.
+
+### GPA
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+gpa_grid <- data.frame(
+  gpa = seq(min(data_preproc$gpa), max(data_preproc$gpa), length.out = 100),
+  commute = mean(data_preproc$commute, na.rm = TRUE),
+  support = mean(data_preproc$support, na.rm = TRUE),
+  self_efficacy = mean(data_preproc$self_efficacy, na.rm = TRUE)
+)
+
+gpa_grid$pred_ols <- predict(fit_ols, newdata = gpa_grid)
+gpa_grid$pred_25 <- predict(fit_qr_25, newdata = gpa_grid)
+gpa_grid$pred_50 <- predict(fit_qr_50, newdata = gpa_grid)
+gpa_grid$pred_75 <- predict(fit_qr_75, newdata = gpa_grid)
+
+plot_data <- melt(gpa_grid,
+                  id.vars = "gpa",
+                  measure.vars = c("pred_ols", "pred_25", "pred_50", "pred_75"),
+                  variable.name = "model",
+                  value.name = "prediction")
+
+plot_data$model <- factor(plot_data$model,
+                          levels = c("pred_ols", "pred_25", "pred_50", "pred_75"),
+                          labels = c("OLS", "QR 25%", "QR 50%", "QR 75%"))
+
+ggplot(plot_data, aes(x = gpa, y = prediction, color = model)) +
+  geom_line(size = 1.2) +
+  labs(title = "Predicted Stress Across GPA Levels",
+       subtitle = "Comparing OLS vs Quantile Regression",
+       x = "GPA", y = "Predicted Stress", color = "Model") +
+  tema_sencillo +
+  scale_color_manual(values = c("#E15759", "#59A14F", "#4E79A7", "#B07AA1"))
+```
+
+In the GPA graph, we can see a clear divergence in the regression lines as we move from lower to higher stress levels.
+
+The **25th percentile** line is fairly flat, showing little impact of GPA on those with low stress.
+
+Staring at **the median**, and specially at the **75th percentile**, the line curves upwards, indicating that higher GPA is increasingly associated with higher stress
+
+The **OLS line** shows a mild upward slop, but again, blends over the differences seen in the quantiles, only truly representing the 50th percentile line.
+
+This plot suggests that GPA related stress disproportionately affects already stressed individuals, perhaps due to performance pressure or perfectionism.
+
+### Support
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+support_grid <- data.frame(
+  support = seq(min(data_preproc$support), max(data_preproc$support), length.out = 100),
+  commute = mean(data_preproc$commute, na.rm = TRUE),
+  gpa = mean(data_preproc$gpa, na.rm = TRUE),
+  self_efficacy = mean(data_preproc$self_efficacy, na.rm = TRUE)
+)
+
+support_grid$pred_ols <- predict(fit_ols, newdata = support_grid)
+support_grid$pred_25 <- predict(fit_qr_25, newdata = support_grid)
+support_grid$pred_50 <- predict(fit_qr_50, newdata = support_grid)
+support_grid$pred_75 <- predict(fit_qr_75, newdata = support_grid)
+
+plot_data <- melt(support_grid,
+                  id.vars = "support",
+                  measure.vars = c("pred_ols", "pred_25", "pred_50", "pred_75"),
+                  variable.name = "model",
+                  value.name = "prediction")
+
+plot_data$model <- factor(plot_data$model,
+                          levels = c("pred_ols", "pred_25", "pred_50", "pred_75"),
+                          labels = c("OLS", "QR 25%", "QR 50%", "QR 75%"))
+
+ggplot(plot_data, aes(x = support, y = prediction, color = model)) +
+  geom_line(size = 1.2) +
+  labs(title = "Predicted Stress Across Support Levels",
+       subtitle = "Comparing OLS vs Quantile Regression",
+       x = "Support", y = "Predicted Stress", color = "Model") +
+  tema_sencillo +
+  scale_color_manual(values = c("#E15759", "#59A14F", "#4E79A7", "#B07AA1"))
+
+```
+
+The support plot shows a remarkably consistent **upward trend across all four lines** (OLS and all 3 quantiles).
+
+The lines are closely aligned and slope positively, indicating that higher values on the support scale are strongly associated with higher stress across the entire distribution.
+
+This likely means the scale of support in our data is reversed, perhaps higher values mean lower perceived support.
+
+Regardless, the key takeaway from the visualization is the uniform effect of support, it impacts individuals regardless of whether they are low, medium or high stress. It dominates the graph visually and makes a strong case for support, or lack of it, being a central factor.
+
+### Self Efficacy
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+self_efficacy_grid <- data.frame(
+  self_efficacy = seq(min(data_preproc$self_efficacy), max(data_preproc$self_efficacy), length.out = 100),
+  commute = mean(data_preproc$commute, na.rm = TRUE),
+  gpa = mean(data_preproc$gpa, na.rm = TRUE),
+  support = mean(data_preproc$support, na.rm = TRUE)
+)
+
+self_efficacy_grid$pred_ols <- predict(fit_ols, newdata = self_efficacy_grid)
+self_efficacy_grid$pred_25 <- predict(fit_qr_25, newdata = self_efficacy_grid)
+self_efficacy_grid$pred_50 <- predict(fit_qr_50, newdata = self_efficacy_grid)
+self_efficacy_grid$pred_75 <- predict(fit_qr_75, newdata = self_efficacy_grid)
+
+plot_data <- melt(self_efficacy_grid,
+                  id.vars = "self_efficacy",
+                  measure.vars = c("pred_ols", "pred_25", "pred_50", "pred_75"),
+                  variable.name = "model",
+                  value.name = "prediction")
+
+plot_data$model <- factor(plot_data$model,
+                          levels = c("pred_ols", "pred_25", "pred_50", "pred_75"),
+                          labels = c("OLS", "QR 25%", "QR 50%", "QR 75%"))
+
+ggplot(plot_data, aes(x = self_efficacy, y = prediction, color = model)) +
+  geom_line(size = 1.2) +
+  labs(title = "Predicted Stress Across Self Efficacy Levels",
+       subtitle = "Comparing OLS vs Quantile Regression",
+       x = "Self Efficacy", y = "Predicted Stress", color = "Model") +
+  tema_sencillo +
+  scale_color_manual(values = c("#E15759", "#59A14F", "#4E79A7", "#B07AA1"))
+
+```
+
+The plot for self efficacy is the most subtle. **All four lines appear fairly flat**, and they even crisscross at different points. There is no clear trend or separation across the stress distribution.
+
+This visual flatness supports the interpretation that self efficacy does not have a strong or consistent relationship with stress in this sample. The plot helps confirm what the statistical output suggested, that self efficacy may be a less influential factor in explaining stress levels, or its effects may be masked by stronger predictors like support.
+
+### Residual Plots for OLS
+
+With OLS we assume homoscedasticity (constant variance of residuals) and linearity (the model correctly captures the shape of the relationship). In order to diagnose whether the OLS model is actually correct, we must check that this assumptions are not violated.
+
+Plotting the residuals is useful because if residuals fan out, it indicates heteroskedasticity suggestion OLS is not appropriate.
+
+Quantile regression is robust in these cases, so it does not require constant variance, and it might support our argument of using QR since it may be a better approach.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+ggplot(data = data.frame(fitted = fitted(fit_ols), residuals = resid(fit_ols)), 
+       aes(x = fitted, y = residuals)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "plum4") +
+  labs(title = "OLS: Residuals vs Fitted Values",
+       x = "Fitted Stress Values",
+       y = "OLS Residuals") +
+  tema_sencillo
+```
+
+In the residuals vs fitted values plot we observe the following pattern.
+
+Most residuals are relatively close to zero, and form a horizontal cloud. This is generally a good sign, since it indicates that the model is capturing tendency of the data fairly well.
+
+There is some mild dispersion of residuals as fitted values increase, which suggests a slight heteroskedasticity, non constant variance, although it does not appear severe.
+
+We will also generate a QQ plot in order to look more into this residual distribution.
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+ggplot(data = data.frame(residuals = resid(fit_ols)), aes(sample = residuals)) +
+  stat_qq() +
+  stat_qq_line(color = "plum4", linetype = "dashed") +
+  labs(title = "QQ Plot of Residuals in OLS",
+       x = "Theoretical Quantiles",
+       y = "Residuals Quantiles") +
+  tema_sencillo
+```
+
+In the QQ plot of the OLS residuals we observe that the central points lie fairly close to the reference line, suggesting that the bulk of the residuals approximately follows a normal distribution.
+
+However, the points ar both ends, at the tails, deviate from the line. This indicates that the extreme values are not well captured by a normal distribution
+
+#### Interpretation of both plots
+
+To assess the assumptions on our OLS model, we examined both plots. Together, these visual diagnostics help evaluate the normality and homoscedasticity of residuals.
+
+We see how minor deviations from both normality and constant variance are present, but do not severely undermine the validity of our OLS model.
+
+However, because OLS inference depends on these assumptions it is good practice to be cautious when interpreting p-values obtained from the OLS output and consider robust regression methods since inference in our case is a priority.
+
+Our use of quantile regression is well justified since is robust to non normality and heteroskedasticity and it provides richer insights into how predictors affect different parts of the stress distribution.
+
+## Compare Model Fit (OLS vs QR)
+
+Once we have checked the previous assumptions, we want to know how well each model explains stress
+
+```{r}
+#| message: false
+#| warning: false
+#| code-fold: true
+#| echo: true
+#| results: hide
+summary(fit_ols)$r.squared     
+fit_qr_null_25 <- rq(stress ~ 1, data = data_preproc, tau = 0.25)
+fit_qr_null_50 <- rq(stress ~ 1, data = data_preproc, tau = 0.5)
+fit_qr_null_75 <- rq(stress ~ 1, data = data_preproc, tau = 0.75)
+rho_full_25 <- sum(abs(resid(fit_qr_25)))
+rho_null_25 <- sum(abs(resid(fit_qr_null_25)))
+rho_full_50 <- sum(abs(resid(fit_qr_50)))
+rho_null_50 <- sum(abs(resid(fit_qr_null_50)))
+rho_full_75 <- sum(abs(resid(fit_qr_75)))
+rho_null_75 <- sum(abs(resid(fit_qr_null_75)))
+1 - (rho_full_25 / rho_null_25)
+1 - (rho_full_50 / rho_null_50)
+1 - (rho_full_75 / rho_null_75)
+```
+
+| Model  | R2 / Pseudo R2 |
+|--------|----------------|
+| OLS    | 0.8927274      |
+| QR 25% | 0.7000261      |
+| QR 50% | 0.6984994      |
+| QR 75% | 0.7048825      |
+
+While the OLS model achieved a higher $R^2$ being able to explain around 90% of the information, the quantile regression models still explained a substantial portion of the variation in stress at different points of the distribution with a pseudo $R^2$ of 0.7.
+
+Although the QR model explains around 70% of the variation at each quantile and has a lower value than OLS, these values are quite solid since QR captures distributional shifts such as how support or commute affect low stress vs high stress individuals differently.
+
+This reinforces the value of QR in revealing nuanced, quantile specific relationships that OLS alone may overlook.
+
+## Results
+
+We ended up running four different models using stress as the response variable and four predictors (commute, GPA, support and self efficacy)
+
+We fitted - Ordinary Least Squares, which estimates the average effect - Quantile Regression at - 25th percentile - 50th percentile (the median) - 75th percentile
+
+| Predictor     | OLS      | QR 25%   | QR 50%   | QR 75%  |
+|---------------|----------|----------|----------|---------|
+| Commute       | 0.0669   | -0.32751 | -0.0425  | 0.03195 |
+| GPA           | 0.70764  | 0.32991  | 0.64194  | 0.87454 |
+| Support       | 7.72829  | 7.38389  | 7.89782  | 7.84958 |
+| Self efficacy | -0.12345 | -0.15014 | -0.00038 | 0.13278 |
+
+### Commute
+
+We observe a mixed pattern
+
+**OLS** shows a small positive relationship, suggesting longer commutes are weakly associated with higher stress on average.
+
+**QR 25%** shoes a negative effect, suggesting that for those with lower stress, commuting longer might actually correlate with lower stress, possibly due to time for reflection or decompression
+
+**QR 50% and 75%** show slight positive effects, indicating that for more stress individuals, commute may still be a contributing factor, though weaker than expected.
+
+The relationship between commute and stress is not linear, quantile regression reveals that it may actually reduce stress in low stress individuals but slightly increase it in high stress ones.
+
+### GPA
+
+Positive association in **all models**. Contrary to typical expectations where higher GPA correlates with higher stress.
+
+Students performing better academically might be under greater pressure to maintain their success, especially at higher stress levels. The effect grows from low to high quantiles, suggesting academic pressure may be more stressful for already stressed students.
+
+### Support
+
+Strong and consistent positive effect across **all models**.
+
+This is unexpected since normally we would expect more support to reduce stress. The positive coefficients imply that as perceived support increases, so does stress.
+
+This is possibly due to a reverse causality, those under more stress seek or perceive more support or a measurement bias, for example, support might be perceived as pressure or micromanagement.
+
+The relationship is counterintuitive and could reflect complex dynamics between needing support and experiencing stress
+
+### Self Efficacy
+
+It shows a trend. Protective at **low** stress levels, effect neutralizes around the **median** and is slightly positive at **higher** stress levels, suggesting that for the most stressed individuals, self efficacy may not be enough to buffer their stress, or the may overestimate their control.
+
+The protective role of self efficacy may diminish under high stress
+
+### Final Models
+
+The final models look like
+
+| Model  | Fitted Formula                                                  |
+|--------|-----------------------------------------------------------------|
+| OLS    | 0.93 + 0.067Commute + 0.71GPA + 7.73Support - 0.12SelfEfficacy  |
+| QR 25% | 2.50 - 0.33Commute + 0.33GPA + 7.38Support - 0.15SelfEfficacy   |
+| QR 50% | 1.68 - 0.04Commute + 0.64GPA + 7.90Support - 0.0004SelfEfficacy |
+| QR 75% | 1.79 + 0.032commute + 0.87GPA + 7.85Support + 0.13SelfEfficacy  |
+
+## Limitations
+
+Residual analysis QQ plot show non normality tails, which may impact inference in OLS Residual vs fitted plot showed some spread, but not critical
+
+Counterintuitive signs such as GPA and support positively associated with stress suggesting potential reverse causality or measurement artifacts.
+
+Cross-sectional design Cannot infer causal direction, for example, does stress increase GPA, or viceversa?
+
+No interaction effects Including gender, age, or income might reveal moderation effects
+
+## Conclusions
+
+Support shows the largest effect, but in a positive direction, implying more support is linked to more stress, possibly due to reverse causality
+
+GPA, contrary to expectations, is positively associated with stress, especially at higher stress levels, suggesting that better academic performers may feel more pressure.
+
+Commute shows a non linear pattern, potentially protective for low stress individuals but slightly harmful for others.
+
+Self efficacy helps reduce stress in low stress individuals but may lose its effect or backfire in high stress contexts.
+
+Quantile regression was critical in uncovering these heterogeneous effects that OLS alone could not detect.
